@@ -19,6 +19,21 @@ print_info() {
   echo -e "${YELLOW}$1${NC}"
 }
 
+is_t2_mac() {
+  lspci -n 2>/dev/null | grep -qE "106b:180[12]"
+}
+
+# On T2 Macs, the T2 chip regenerates USB device hashes on every boot,
+# so hash-based rules break after restart. Internal T2 devices connect via
+# the BCE VHCI (virtual bus) with connect-type "unknown" — not a physical
+# USB port — so matching by vendor ID + interface class is safe.
+strip_t2_hashes() {
+  sed -E '/with-connect-type "unknown"/ {
+    s/ hash "[^"]*"//g
+    s/ serial "[^"]*"//g
+  }'
+}
+
 remove_usbguard() {
   print_success "Removing USBGuard.\n"
 
@@ -59,7 +74,12 @@ setup_usbguard() {
 
   # Generate policy from currently connected devices
   print_info "\nGenerating policy from currently connected devices..."
-  sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf > /dev/null
+  if is_t2_mac; then
+    print_info "T2 Mac detected — stripping hashes from internal devices (T2 regenerates them on boot)"
+    sudo usbguard generate-policy | strip_t2_hashes | sudo tee /etc/usbguard/rules.conf > /dev/null
+  else
+    sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf > /dev/null
+  fi
   sudo chmod 600 /etc/usbguard/rules.conf
 
   echo ""
