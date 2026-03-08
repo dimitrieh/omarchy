@@ -1,0 +1,117 @@
+#!/bin/bash
+
+set -e
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_success() {
+  echo -e "${GREEN}$1${NC}"
+}
+
+print_error() {
+  echo -e "${RED}$1${NC}"
+}
+
+print_info() {
+  echo -e "${YELLOW}$1${NC}"
+}
+
+remove_usbguard() {
+  print_success "Removing USBGuard.\n"
+
+  # Stop and disable services
+  if systemctl is-active --quiet usbguard.service; then
+    print_info "Stopping USBGuard service..."
+    sudo systemctl stop usbguard.service
+  fi
+  sudo systemctl disable usbguard.service 2>/dev/null || true
+
+  if systemctl --user is-active --quiet usbguard-notify.service; then
+    print_info "Stopping notification listener..."
+    systemctl --user stop usbguard-notify.service
+  fi
+  systemctl --user disable usbguard-notify.service 2>/dev/null || true
+
+  # Remove lock/unlock hooks from hypridle
+  if [[ -f ~/.config/hypr/hypridle.conf ]]; then
+    print_info "Removing lock/unlock hooks from hypridle..."
+    sed -i '/usbguard set-parameter InsertedDevicePolicy/d' ~/.config/hypr/hypridle.conf
+  fi
+
+  # Uninstall package
+  print_info "Removing USBGuard package..."
+  sudo pacman -Rns --noconfirm usbguard
+
+  print_success "USBGuard has been completely removed."
+}
+
+setup_usbguard() {
+  print_success "Setting up USBGuard — USB device authorization.\n"
+  print_info "USBGuard blocks unauthorized USB devices by default."
+  print_info "Currently connected devices will be whitelisted.\n"
+
+  # Install
+  print_info "Installing USBGuard..."
+  omarchy-pkg-add usbguard
+
+  # Generate policy from currently connected devices
+  print_info "\nGenerating policy from currently connected devices..."
+  sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf > /dev/null
+  sudo chmod 600 /etc/usbguard/rules.conf
+
+  echo ""
+  print_success "Whitelisted devices:"
+  sudo cat /etc/usbguard/rules.conf | grep -oP 'name "\K[^"]*' | while read -r name; do
+    echo "  • $name"
+  done
+
+  # Grant user IPC access
+  print_info "\nGranting your user permission to manage USB devices..."
+  sudo usbguard add-user "$USER" \
+    --devices=modify,list,listen \
+    --policy=list \
+    --parameters=modify \
+    --exceptions=listen
+
+  # Enable and start service
+  print_info "Enabling USBGuard service..."
+  sudo systemctl enable --now usbguard.service
+
+  # Install notification listener service
+  print_info "Installing notification listener..."
+  local service_src="$HOME/.local/share/omarchy/config/systemd/user/usbguard-notify.service"
+  local service_dst="$HOME/.config/systemd/user/usbguard-notify.service"
+  mkdir -p "$HOME/.config/systemd/user"
+  cp "$service_src" "$service_dst"
+  systemctl --user daemon-reload
+  systemctl --user enable --now usbguard-notify.service
+
+  # Add lock/unlock hooks to hypridle
+  if [[ -f ~/.config/hypr/hypridle.conf ]]; then
+    if ! grep -q "usbguard set-parameter InsertedDevicePolicy" ~/.config/hypr/hypridle.conf; then
+      print_info "Adding lock/unlock hooks to hypridle..."
+      sed -i '/lock_cmd = omarchy-lock-screen/a\    unlock_cmd = usbguard set-parameter InsertedDevicePolicy apply-policy' ~/.config/hypr/hypridle.conf
+      sed -i 's|lock_cmd = omarchy-lock-screen|lock_cmd = usbguard set-parameter InsertedDevicePolicy block \&\& omarchy-lock-screen|' ~/.config/hypr/hypridle.conf
+    fi
+  fi
+
+  echo ""
+  print_success "USBGuard is now active!"
+  print_info "• New USB devices will be blocked and you'll get a notification"
+  print_info "• Click the notification to allow a device permanently"
+  print_info "• When the screen locks, all new USB devices are blocked"
+  print_info "• When you unlock, normal policy resumes"
+
+  echo ""
+  print_info "To recover if you lose input (e.g. T2 Mac internal USB):"
+  print_info "  Boot with: systemd.mask=usbguard.service"
+}
+
+if [[ "--remove" == "$1" ]]; then
+  remove_usbguard
+else
+  setup_usbguard
+fi

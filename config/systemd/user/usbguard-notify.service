@@ -1,0 +1,11 @@
+[Unit]
+Description=USBGuard device notification listener
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/share/omarchy/bin/omarchy-usbguard-notify
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

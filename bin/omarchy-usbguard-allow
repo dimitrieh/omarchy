@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Called by mako when clicking a USBGuard notification.
+# Finds the most recent blocked device and allows it permanently.
+
+blocked=$(usbguard list-devices 2>/dev/null | grep "block" | tail -1)
+
+if [[ -n "$blocked" ]]; then
+  device_num=$(echo "$blocked" | grep -oP '^\K[0-9]+')
+  device_name=$(echo "$blocked" | grep -oP 'name "\K[^"]*')
+  [[ -z "$device_name" ]] && device_name="Unknown USB device"
+
+  usbguard allow-device -p "$device_num"
+  notify-send -a "USBGuard-confirm" "USB device allowed" "$device_name (permanent)" -t 3000
+fi

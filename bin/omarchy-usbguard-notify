@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Listen for USBGuard device events and show a notification
+# when a device is blocked. User clicks the notification to allow it.
+
+device_num=""
+target_block=""
+
+usbguard watch -w | while IFS= read -r line; do
+  if [[ "$line" == *"[device] PolicyApplied"* ]]; then
+    device_num=$(echo "$line" | grep -oP 'id=\K[0-9]+')
+    target_block=""
+  elif [[ "$line" == *"target_new=block"* && -n "$device_num" ]]; then
+    target_block=true
+  elif [[ "$line" == *"device_rule="* && "$target_block" == "true" ]]; then
+    device_name=$(echo "$line" | grep -oP 'name "\K[^"]*')
+    [[ -z "$device_name" ]] && device_name="Unknown USB device"
+
+    # Dismiss any previous USBGuard notifications
+    makoctl dismiss -a USBGuard 2>/dev/null
+
+    notify-send -u critical \
+      -a "USBGuard" \
+      -i "drive-removable-media" \
+      -c "usbguard-blocked-$device_num" \
+      "USB device blocked: $device_name" \
+      "Click to allow (device $device_num)"
+
+    device_num=""
+    target_block=""
+  fi
+done
